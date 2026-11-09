@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Local manifest for LineageOS 18.1 on the Nokia Lumia 930 (martini).
+  Put this file in .repo/local_manifests/ of a lineage-18.1 checkout (see README).
+-->
+<manifest>
+  <remote name="lumia-msm8974" fetch="https://github.com/lumia-msm8974" />
+  <remote name="muppets" fetch="https://github.com/TheMuppets" />
+
+  <!-- Nokia Lumia 930 -->
+  <project path="device/nokia/martini" name="android_device_nokia_martini" remote="lumia-msm8974" revision="lineage-18.1" />
+  <project path="vendor/nokia/martini" name="android_vendor_nokia_martini" remote="lumia-msm8974" revision="lineage-18.1" />
+  <!-- Kernel shared by the MSM8974 Lumias, one branch per device -->
+  <project path="kernel/nokia/msm8974" name="android_kernel_nokia_msm8974" remote="lumia-msm8974" revision="lineage-18.1-martini" />
+
+  <!-- Temporary base: LineageOS msm8974 common tree and its blobs -->
+  <project path="device/oppo/msm8974-common" name="LineageOS/android_device_oppo_msm8974-common" remote="github" revision="lineage-18.1" />
+  <project path="device/oppo/common" name="LineageOS/android_device_oppo_common" remote="github" revision="lineage-18.1" />
+  <project path="vendor/oppo" name="proprietary_vendor_oppo" remote="muppets" revision="lineage-18.1" />
+
+  <!-- Reference device (OnePlus One): not built, used for comparison and blobs -->
+  <project path="device/oneplus/bacon" name="LineageOS/android_device_oneplus_bacon" remote="github" revision="lineage-18.1" />
+  <project path="vendor/oneplus" name="proprietary_vendor_oneplus" remote="muppets" revision="lineage-18.1" clone-depth="1" />
+</manifest>
