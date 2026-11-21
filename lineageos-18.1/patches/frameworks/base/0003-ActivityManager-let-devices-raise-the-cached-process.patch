@@ -1,0 +1,46 @@
+From dc150e9310f83052f3163e7052a61943f595a145 Mon Sep 17 00:00:00 2001
+From: giannoccarol <giannoccarol@users.noreply.github.com>
+Date: Sun, 22 Nov 2026 00:20:24 +0100
+Subject: [PATCH] ActivityManager: let devices raise the cached process limit
+
+The limit of 32 cached processes (16 with activities, 16 empty) is
+meant as a safety net for devices with a lot of RAM: on devices that are
+short on it the low memory killer decides how many cached processes fit.
+With a few browser or WebView child processes the count is what kills
+apps long before memory does.
+
+Read the default from ro.config.max_cached_processes (32 when unset).
+The DeviceConfig flag and the developer option still override it.
+
+Change-Id: I1aa12841850650ac80cf6954611bb154a021d997
+---
+ .../com/android/server/am/ActivityManagerConstants.java     | 6 +++++-
+ 1 file changed, 5 insertions(+), 1 deletion(-)
+
+diff --git a/services/core/java/com/android/server/am/ActivityManagerConstants.java b/services/core/java/com/android/server/am/ActivityManagerConstants.java
+index 00d8208e..0db22571 100644
+--- a/services/core/java/com/android/server/am/ActivityManagerConstants.java
++++ b/services/core/java/com/android/server/am/ActivityManagerConstants.java
+@@ -26,6 +26,7 @@ import android.database.ContentObserver;
+ import android.net.Uri;
+ import android.os.Build;
+ import android.os.Handler;
++import android.os.SystemProperties;
+ import android.provider.DeviceConfig;
+ import android.provider.DeviceConfig.OnPropertiesChangedListener;
+ import android.provider.DeviceConfig.Properties;
+@@ -91,7 +92,10 @@ final class ActivityManagerConstants extends ContentObserver {
+     static final String KEY_FGS_START_FOREGROUND_TIMEOUT = "fgs_start_foreground_timeout";
+     static final String KEY_PENDINGINTENT_WARNING_THRESHOLD = "pendingintent_warning_threshold";
+ 
+-    private static final int DEFAULT_MAX_CACHED_PROCESSES = 32;
++    // Devices that are short on RAM can raise this: there the low memory killer decides how
++    // many cached processes fit, and this count should not be what kills them.
++    private static final int DEFAULT_MAX_CACHED_PROCESSES =
++            SystemProperties.getInt("ro.config.max_cached_processes", 32);
+     private static final long DEFAULT_BACKGROUND_SETTLE_TIME = 60*1000;
+     private static final long DEFAULT_FGSERVICE_MIN_SHOWN_TIME = 2*1000;
+     private static final long DEFAULT_FGSERVICE_MIN_REPORT_TIME = 3*1000;
+-- 
+2.56.1
+

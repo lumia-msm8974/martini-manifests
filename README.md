@@ -36,6 +36,9 @@ git clone https://github.com/lumia-msm8974/martini-manifests
 - `frameworks/base/0002`: `TextView` reads `ro.config.marquee_fade_scrolling`; the msm8974 common tree sets it
   to `false`, so a scrolling marquee has no fading edges (each one costs the Adreno 330 a framebuffer copy in
   the middle of the frame).
+- `frameworks/base/0003`: ActivityManager reads its cached process limit from
+  `ro.config.max_cached_processes` (32 when unset); the msm8974 common tree sets 64, so the low memory killer,
+  not a count, decides how many background apps stay alive.
 
 Credits: LineageOS (msm8974 common, bacon and kernel trees), TheMuppets
 (vendor blobs), Markynose/lumia930-linux (Lumia 930 hardware map). See the
