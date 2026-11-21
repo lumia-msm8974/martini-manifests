@@ -1,0 +1,97 @@
+From 66b7d03da01516cdce781dd20a0a98395dff62a5 Mon Sep 17 00:00:00 2001
+From: Lorenzo Giannoccaro <giannoccarol@users.noreply.github.com>
+Date: Mon, 9 Nov 2026 20:41:56 +0100
+Subject: [PATCH 1/2] SystemUI: shared: build one ThumbnailData per task
+ snapshot
+
+TaskStackChangeListeners built a new ThumbnailData for every registered
+listener on each task snapshot. Each one wraps the snapshot in a hardware
+bitmap that registers the full buffer size as native memory, so every app
+switch started a NativeAlloc garbage collection in SystemUI, which has
+many listeners and none that uses snapshots, and in the launcher.
+
+Build the ThumbnailData once, only when a listener overrides
+onTaskSnapshotChanged, and free the graphic buffer when no listener
+wants it. A class whose method cannot be found by name still gets the
+snapshot.
+
+Change-Id: I0308025ce39e0d1ead756f7c43cc6627ceb48795
+---
+ .../system/TaskStackChangeListeners.java      | 39 ++++++++++++++++++-
+ 1 file changed, 37 insertions(+), 2 deletions(-)
+
+diff --git a/packages/SystemUI/shared/src/com/android/systemui/shared/system/TaskStackChangeListeners.java b/packages/SystemUI/shared/src/com/android/systemui/shared/system/TaskStackChangeListeners.java
+index f214648d..21a8ffa5 100644
+--- a/packages/SystemUI/shared/src/com/android/systemui/shared/system/TaskStackChangeListeners.java
++++ b/packages/SystemUI/shared/src/com/android/systemui/shared/system/TaskStackChangeListeners.java
+@@ -34,6 +34,7 @@ import com.android.internal.os.SomeArgs;
+ import com.android.systemui.shared.recents.model.ThumbnailData;
+ 
+ import java.util.ArrayList;
++import java.util.HashMap;
+ import java.util.List;
+ 
+ /**
+@@ -48,6 +49,8 @@ public class TaskStackChangeListeners extends TaskStackListener {
+      */
+     private final List<TaskStackChangeListener> mTaskStackListeners = new ArrayList<>();
+     private final List<TaskStackChangeListener> mTmpListeners = new ArrayList<>();
++    // Listener classes that override onTaskSnapshotChanged; used on the handler thread only.
++    private final HashMap<Class<?>, Boolean> mWantsSnapshot = new HashMap<>();
+ 
+     private final Handler mHandler;
+     private boolean mRegistered;
+@@ -243,6 +246,22 @@ public class TaskStackChangeListeners extends TaskStackListener {
+                 .sendToTarget();
+     }
+ 
++    private boolean wantsSnapshot(TaskStackChangeListener listener) {
++        final Class<?> cls = listener.getClass();
++        Boolean wants = mWantsSnapshot.get(cls);
++        if (wants == null) {
++            try {
++                wants = cls.getMethod("onTaskSnapshotChanged", int.class, ThumbnailData.class)
++                        .getDeclaringClass() != TaskStackChangeListener.class;
++            } catch (NoSuchMethodException e) {
++                // Renamed by an obfuscating build: deliver the snapshot as before.
++                wants = true;
++            }
++            mWantsSnapshot.put(cls, wants);
++        }
++        return wants;
++    }
++
+     private final class H extends Handler {
+         private static final int ON_TASK_STACK_CHANGED = 1;
+         private static final int ON_TASK_SNAPSHOT_CHANGED = 2;
+@@ -287,9 +306,25 @@ public class TaskStackChangeListeners extends TaskStackListener {
+                     }
+                     case ON_TASK_SNAPSHOT_CHANGED: {
+                         Trace.beginSection("onTaskSnapshotChanged");
++                        // Every ThumbnailData wraps the snapshot in a hardware bitmap that
++                        // registers the full buffer size as native memory, so one per
++                        // listener started a garbage collection on every app switch, in
++                        // processes that never look at snapshots. Build one, only for the
++                        // listeners that use it, and free the buffer when nobody does.
++                        final TaskSnapshot snapshot = (TaskSnapshot) msg.obj;
++                        ThumbnailData thumbnail = null;
+                         for (int i = mTaskStackListeners.size() - 1; i >= 0; i--) {
+-                            mTaskStackListeners.get(i).onTaskSnapshotChanged(msg.arg1,
+-                                    new ThumbnailData((TaskSnapshot) msg.obj));
++                            final TaskStackChangeListener listener = mTaskStackListeners.get(i);
++                            if (!wantsSnapshot(listener)) {
++                                continue;
++                            }
++                            if (thumbnail == null) {
++                                thumbnail = new ThumbnailData(snapshot);
++                            }
++                            listener.onTaskSnapshotChanged(msg.arg1, thumbnail);
++                        }
++                        if (thumbnail == null && snapshot.getSnapshot() != null) {
++                            snapshot.getSnapshot().destroy();
+                         }
+                         Trace.endSection();
+                         break;
+-- 
+2.56.1
+

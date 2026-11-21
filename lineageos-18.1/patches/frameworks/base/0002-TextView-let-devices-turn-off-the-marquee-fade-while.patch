@@ -1,0 +1,66 @@
+From 1598ed3ffebc1fbb36ead7fea284ea5152d8eb7e Mon Sep 17 00:00:00 2001
+From: giannoccarol <giannoccarol@users.noreply.github.com>
+Date: Sat, 21 Nov 2026 23:38:27 +0100
+Subject: [PATCH 2/2] TextView: let devices turn off the marquee fade while
+ scrolling
+
+With config_ui_enableFadingMarquee off, an idle marquee shows an ellipsis
+instead of a fading edge, because the framebuffer readback behind the
+fade is expensive on most GPUs. The fade still comes back while the text
+scrolls.
+
+On a tile-based GPU such as the Adreno 330 every fading edge closes the
+render pass, copies a strip of the target and reloads all of it. Four
+scrolling texts in the quick settings (two tile labels, the build number,
+the carrier text without a SIM) cost 21 ms of GPU per frame at 1080p and
+the panel expands at 50 fps; with one of them it stays at 60.
+
+Read ro.config.marquee_fade_scrolling (default true, the current
+behaviour). When it is false the scrolling text is clipped at the edges.
+
+Change-Id: I013b8f9c060926e49698f8240716bcde94e8dee3
+---
+ core/java/android/widget/TextView.java | 13 ++++++++++++-
+ 1 file changed, 12 insertions(+), 1 deletion(-)
+
+diff --git a/core/java/android/widget/TextView.java b/core/java/android/widget/TextView.java
+index 5870ae79..38c60518 100644
+--- a/core/java/android/widget/TextView.java
++++ b/core/java/android/widget/TextView.java
+@@ -81,6 +81,7 @@ import android.os.Parcelable;
+ import android.os.ParcelableParcel;
+ import android.os.Process;
+ import android.os.SystemClock;
++import android.os.SystemProperties;
+ import android.os.UserHandle;
+ import android.provider.Settings;
+ import android.text.BoringLayout;
+@@ -390,6 +391,16 @@ public class TextView extends View implements ViewTreeObserver.OnPreDrawListener
+      */
+     private static final int MARQUEE_FADE_SWITCH_SHOW_FADE = 2;
+ 
++    /**
++     * Whether a marquee that shows an ellipsis while it is idle (see
++     * {@link #MARQUEE_FADE_SWITCH_SHOW_ELLIPSIS}) fades its edges while it scrolls. A fading edge
++     * reads back the framebuffer: a tile-based GPU has to store and reload the whole render target
++     * for every edge of every frame. Devices where that is too slow set
++     * ro.config.marquee_fade_scrolling to false; the scrolling text is then clipped at the edges.
++     */
++    private static final boolean MARQUEE_FADE_WHILE_SCROLLING =
++            SystemProperties.getBoolean("ro.config.marquee_fade_scrolling", true);
++
+     @UnsupportedAppUsage
+     private static final int LINES = 1;
+     private static final int EMS = LINES;
+@@ -10503,7 +10514,7 @@ public class TextView extends View implements ViewTreeObserver.OnPreDrawListener
+                 final Layout tmp = mLayout;
+                 mLayout = mSavedMarqueeModeLayout;
+                 mSavedMarqueeModeLayout = tmp;
+-                setHorizontalFadingEdgeEnabled(true);
++                setHorizontalFadingEdgeEnabled(MARQUEE_FADE_WHILE_SCROLLING);
+                 requestLayout();
+                 invalidate();
+             }
+-- 
+2.56.1
+
