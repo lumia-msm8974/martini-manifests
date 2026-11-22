@@ -39,6 +39,9 @@ git clone https://github.com/lumia-msm8974/martini-manifests
 - `frameworks/base/0003`: ActivityManager reads its cached process limit from
   `ro.config.max_cached_processes` (32 when unset); the msm8974 common tree sets 64, so the low memory killer,
   not a count, decides how many background apps stay alive.
+- `frameworks/base/0004`: SettingsProvider loads a default for the animator duration scale
+  (`def_animator_duration_scale`); the msm8974 common tree overlays it, with the window and transition scales, to
+  0.5x for new installations.
 
 Credits: LineageOS (msm8974 common, bacon and kernel trees), TheMuppets
 (vendor blobs), Markynose/lumia930-linux (Lumia 930 hardware map). See the
