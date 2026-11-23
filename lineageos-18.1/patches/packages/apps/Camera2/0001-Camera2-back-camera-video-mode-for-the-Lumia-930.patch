@@ -1,0 +1,160 @@
+From 2a973f68266839e646798691739873917087c2bd Mon Sep 17 00:00:00 2001
+From: Lorenzo Giannoccaro <giannoccarol@users.noreply.github.com>
+Date: Mon, 23 Nov 2026 16:53:07 +0100
+Subject: [PATCH] Camera2: back camera video mode for the Lumia 930
+
+Add a setting with Standard, 1080p at 60 fps and 4K at 30 fps. These
+sensor modes have no camcorder profile, so the video module adjusts the
+1080p profile. The setting is shown only on martini.
+
+Change-Id: Ie95b73851fba9f2c456905c5396d62619a183e43
+---
+ res/values-it/lumia_video_modes.xml           |  7 +++++++
+ res/values/lumia_video_modes.xml              | 18 ++++++++++++++++
+ res/xml/camera_preferences.xml                |  8 +++++++
+ src/com/android/camera/VideoModule.java       | 21 ++++++++++++++++++-
+ .../settings/CameraSettingsActivity.java      |  3 +++
+ src/com/android/camera/settings/Keys.java     |  5 +++++
+ 6 files changed, 61 insertions(+), 1 deletion(-)
+ create mode 100644 res/values-it/lumia_video_modes.xml
+ create mode 100644 res/values/lumia_video_modes.xml
+
+diff --git a/res/values-it/lumia_video_modes.xml b/res/values-it/lumia_video_modes.xml
+new file mode 100644
+index 0000000..109dd01
+--- /dev/null
++++ b/res/values-it/lumia_video_modes.xml
+@@ -0,0 +1,7 @@
++<?xml version="1.0" encoding="utf-8"?>
++<resources>
++    <string name="setting_back_camera_video_mode">Modalità video fotocamera posteriore</string>
++    <string name="video_mode_standard">Standard (risoluzione sopra)</string>
++    <string name="video_mode_1080p60">1080p a 60 fps</string>
++    <string name="video_mode_2160p30">4K a 30 fps (inquadratura ritagliata)</string>
++</resources>
+diff --git a/res/values/lumia_video_modes.xml b/res/values/lumia_video_modes.xml
+new file mode 100644
+index 0000000..14c38ba
+--- /dev/null
++++ b/res/values/lumia_video_modes.xml
+@@ -0,0 +1,18 @@
++<?xml version="1.0" encoding="utf-8"?>
++<resources>
++    <string name="pref_video_mode_standard" translatable="false">standard</string>
++    <string name="setting_back_camera_video_mode">Back camera video mode</string>
++    <string name="video_mode_standard">Standard (resolution above)</string>
++    <string name="video_mode_1080p60">1080p at 60 fps</string>
++    <string name="video_mode_2160p30">4K at 30 fps (cropped view)</string>
++    <string-array name="pref_video_mode_entries">
++        <item>@string/video_mode_standard</item>
++        <item>@string/video_mode_1080p60</item>
++        <item>@string/video_mode_2160p30</item>
++    </string-array>
++    <string-array name="pref_video_mode_entryvalues" translatable="false">
++        <item>standard</item>
++        <item>1080p60</item>
++        <item>2160p30</item>
++    </string-array>
++</resources>
+diff --git a/res/xml/camera_preferences.xml b/res/xml/camera_preferences.xml
+index ff97e2c..a218e89 100644
+--- a/res/xml/camera_preferences.xml
++++ b/res/xml/camera_preferences.xml
+@@ -45,6 +45,14 @@
+           android:entryValues="@array/pref_video_quality_entryvalues"
+           android:key="pref_video_quality_back_key"
+           android:title="@string/setting_back_camera_video" />
++      <!-- BACK camera video mode: 1080p60 and 4K on the Lumia 930 -->
++      <ListPreference
++          android:defaultValue="@string/pref_video_mode_standard"
++          android:entries="@array/pref_video_mode_entries"
++          android:entryValues="@array/pref_video_mode_entryvalues"
++          android:key="pref_video_mode_back_key"
++          android:summary="%s"
++          android:title="@string/setting_back_camera_video_mode" />
+       <!-- FRONT camera VIDEO resolution -->
+       <ListPreference
+           android:defaultValue="@string/pref_video_quality_large"
+diff --git a/src/com/android/camera/VideoModule.java b/src/com/android/camera/VideoModule.java
+index e8222f6..d81bb96 100644
+--- a/src/com/android/camera/VideoModule.java
++++ b/src/com/android/camera/VideoModule.java
+@@ -727,6 +727,8 @@ public class VideoModule extends CameraModule
+         // TODO: Remove this when old camera controls are removed from the UI.
+     }
+ 
++    private boolean mVideo60Fps;
++
+     private void readVideoPreferences() {
+         // The preference stores values from ListPreference and is thus string type for all values.
+         // We need to convert it to int manually.
+@@ -766,6 +768,21 @@ public class VideoModule extends CameraModule
+             quality = CamcorderProfile.QUALITY_HIGH;
+         }
+         mProfile = CamcorderProfile.get(mCameraId, quality);
++        mVideo60Fps = false;
++        if ("martini".equals(android.os.Build.DEVICE) && !isCameraFrontFacing()
++                && !intent.hasExtra(MediaStore.EXTRA_VIDEO_QUALITY)) {
++            // These sensor modes have no camcorder profile of their own.
++            String mode = settingsManager.getString(SettingsManager.SCOPE_GLOBAL,
++                    Keys.KEY_VIDEO_MODE_BACK);
++            if ("1080p60".equals(mode) || "2160p30".equals(mode)) {
++                mProfile = CamcorderProfile.get(mCameraId, CamcorderProfile.QUALITY_1080P);
++                mVideo60Fps = "1080p60".equals(mode);
++                mProfile.videoFrameWidth = mVideo60Fps ? 1920 : 3840;
++                mProfile.videoFrameHeight = mVideo60Fps ? 1080 : 2160;
++                mProfile.videoFrameRate = mVideo60Fps ? 60 : 30;
++                mProfile.videoBitRate = mVideo60Fps ? 30000000 : 45000000;
++            }
++        }
+         mPreferenceRead = true;
+     }
+ 
+@@ -1656,7 +1673,9 @@ public class VideoModule extends CameraModule
+         }
+         int[] fpsRange =
+                 CameraUtil.getMaxPreviewFpsRange(mCameraCapabilities.getSupportedPreviewFpsRange());
+-        if (fpsRange.length > 0) {
++        if (mVideo60Fps) {
++            mCameraSettings.setPreviewFpsRange(60000, 60000);
++        } else if (fpsRange.length > 0) {
+             mCameraSettings.setPreviewFpsRange(fpsRange[0], fpsRange[1]);
+         } else {
+             mCameraSettings.setPreviewFrameRate(mProfile.videoFrameRate);
+diff --git a/src/com/android/camera/settings/CameraSettingsActivity.java b/src/com/android/camera/settings/CameraSettingsActivity.java
+index f6abc36..a15b1e7 100644
+--- a/src/com/android/camera/settings/CameraSettingsActivity.java
++++ b/src/com/android/camera/settings/CameraSettingsActivity.java
+@@ -291,6 +291,9 @@ public class CameraSettingsActivity extends FragmentActivity {
+                 recursiveDelete(resolutions,
+                         findPreference(Keys.KEY_VIDEO_QUALITY_FRONT));
+             }
++            if (!"martini".equals(android.os.Build.DEVICE) && !mPreferencesRemoved) {
++                recursiveDelete(resolutions, findPreference(Keys.KEY_VIDEO_MODE_BACK));
++            }
+             mPreferencesRemoved = true;
+         }
+ 
+diff --git a/src/com/android/camera/settings/Keys.java b/src/com/android/camera/settings/Keys.java
+index f59591f..cb11e26 100644
+--- a/src/com/android/camera/settings/Keys.java
++++ b/src/com/android/camera/settings/Keys.java
+@@ -36,6 +36,7 @@ public class Keys {
+     public static final String KEY_RECORD_LOCATION = "pref_camera_recordlocation_key";
+     public static final String KEY_VIDEO_QUALITY_BACK = "pref_video_quality_back_key";
+     public static final String KEY_VIDEO_QUALITY_FRONT = "pref_video_quality_front_key";
++    public static final String KEY_VIDEO_MODE_BACK = "pref_video_mode_back_key";
+     public static final String KEY_PICTURE_SIZE_BACK = "pref_camera_picturesize_back_key";
+     public static final String KEY_PICTURE_SIZE_FRONT = "pref_camera_picturesize_front_key";
+     public static final String KEY_JPEG_QUALITY = "pref_camera_jpegquality_key";
+@@ -92,6 +93,10 @@ public class Keys {
+         settingsManager.setDefaults(KEY_COUNTDOWN_DURATION, 0,
+             context.getResources().getIntArray(R.array.pref_countdown_duration));
+ 
++        settingsManager.setDefaults(KEY_VIDEO_MODE_BACK,
++            context.getString(R.string.pref_video_mode_standard),
++            context.getResources().getStringArray(R.array.pref_video_mode_entryvalues));
++
+         settingsManager.setDefaults(KEY_CAMERA_ID,
+             context.getString(R.string.pref_camera_id_default),
+             context.getResources().getStringArray(R.array.camera_id_entryvalues));
