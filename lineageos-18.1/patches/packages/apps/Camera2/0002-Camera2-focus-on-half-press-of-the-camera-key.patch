@@ -1,0 +1,120 @@
+From 2bbf994e77199dea46667615498cf72dfddeeffc Mon Sep 17 00:00:00 2001
+From: giannoccarol <giannoccarol@users.noreply.github.com>
+Date: Mon, 23 Nov 2026 17:06:02 +0100
+Subject: [PATCH] Camera2: focus on half press of the camera key
+
+Half press of a two-stage camera key focuses at the center and shows the
+focus ring. The focus stays locked until the key is released, and a full
+press during focusing takes the photo when the focus completes.
+
+Change-Id: Ib095bf1c58c06d33a023dd8b45b322ec88353533
+---
+ .../android/camera/FocusOverlayManager.java   | 29 ++++++++++++++++++-
+ src/com/android/camera/PhotoModule.java       | 11 +++++--
+ 2 files changed, 37 insertions(+), 3 deletions(-)
+
+diff --git a/src/com/android/camera/FocusOverlayManager.java b/src/com/android/camera/FocusOverlayManager.java
+index 72d6f43..0189ac4 100644
+--- a/src/com/android/camera/FocusOverlayManager.java
++++ b/src/com/android/camera/FocusOverlayManager.java
+@@ -104,6 +104,7 @@ public class FocusOverlayManager implements PreviewStatusListener.PreviewAreaCha
+     Listener mListener;
+     private boolean mPreviousMoving;
+     private final FocusRing mFocusRing;
++    private boolean mFocusKeyHeld;
+     private final Rect mPreviewRect = new Rect(0, 0, 0, 0);
+     private boolean mFocusLocked;
+ 
+@@ -232,6 +233,30 @@ public class FocusOverlayManager implements PreviewStatusListener.PreviewAreaCha
+         }
+     }
+ 
++    /**
++     * Half press of a two-stage camera key: focus at the center and show the
++     * ring. The focus stays locked until the key is released.
++     */
++    public void onFocusKeyDown() {
++        if (!mInitialized || mState != STATE_IDLE) {
++            return;
++        }
++        mFocusKeyHeld = true;
++        mFocusRing.startActiveFocus();
++        mFocusRing.centerFocusLocation();
++        autoFocus();
++    }
++
++    public void onFocusKeyUp() {
++        if (!mFocusKeyHeld) {
++            return;
++        }
++        mFocusKeyHeld = false;
++        if (mState == STATE_FOCUSING || mState == STATE_SUCCESS || mState == STATE_FAIL) {
++            cancelAutoFocus();
++        }
++    }
++
+     public void onShutterUp(CameraCapabilities.FocusMode currentFocusMode) {
+         if (!mInitialized) {
+             return;
+@@ -255,7 +280,7 @@ public class FocusOverlayManager implements PreviewStatusListener.PreviewAreaCha
+             return;
+         }
+ 
+-        if (!needAutoFocusCall(currentFocusMode)) {
++        if (!needAutoFocusCall(currentFocusMode) && !mFocusKeyHeld) {
+             // Focus is not needed.
+             capture();
+         } else if (mState == STATE_SUCCESS || mState == STATE_FAIL) {
+@@ -410,11 +435,13 @@ public class FocusOverlayManager implements PreviewStatusListener.PreviewAreaCha
+     }
+ 
+     public void onPreviewStopped() {
++        mFocusKeyHeld = false;
+         // If auto focus was in progress, it would have been stopped.
+         mState = STATE_IDLE;
+     }
+ 
+     public void onCameraReleased() {
++        mFocusKeyHeld = false;
+         onPreviewStopped();
+     }
+ 
+diff --git a/src/com/android/camera/PhotoModule.java b/src/com/android/camera/PhotoModule.java
+index f29b08e..d399f6f 100644
+--- a/src/com/android/camera/PhotoModule.java
++++ b/src/com/android/camera/PhotoModule.java
+@@ -1655,7 +1655,6 @@ public class PhotoModule
+         switch (keyCode) {
+             case KeyEvent.KEYCODE_VOLUME_UP:
+             case KeyEvent.KEYCODE_VOLUME_DOWN:
+-            case KeyEvent.KEYCODE_FOCUS:
+                 if (/* TODO: mActivity.isInCameraApp() && */mFirstTimeInitialized &&
+                     !mActivity.getCameraAppUI().isInIntentReview()) {
+                     if (event.getRepeatCount() == 0) {
+@@ -1664,6 +1663,14 @@ public class PhotoModule
+                     return true;
+                 }
+                 return false;
++            case KeyEvent.KEYCODE_FOCUS:
++                if (mFirstTimeInitialized && !mActivity.getCameraAppUI().isInIntentReview()) {
++                    if (event.getRepeatCount() == 0 && !mPaused && mCameraState == IDLE) {
++                        mFocusManager.onFocusKeyDown();
++                    }
++                    return true;
++                }
++                return false;
+             case KeyEvent.KEYCODE_CAMERA:
+                 if (mFirstTimeInitialized && event.getRepeatCount() == 0) {
+                     onShutterButtonClick();
+@@ -1701,7 +1708,7 @@ public class PhotoModule
+                 return false;
+             case KeyEvent.KEYCODE_FOCUS:
+                 if (mFirstTimeInitialized) {
+-                    onShutterButtonFocus(false);
++                    mFocusManager.onFocusKeyUp();
+                 }
+                 return true;
+         }
+-- 
+2.56.1
+
