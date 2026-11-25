@@ -1,0 +1,39 @@
+From 352f97a7795f3084b1c4be4330b56c655c024a67 Mon Sep 17 00:00:00 2001
+From: Lorenzo Giannoccaro <giannoccarol@users.noreply.github.com>
+Date: Wed, 25 Nov 2026 11:23:45 +0100
+Subject: [PATCH] Camera2: keep 30 fps outside the 60 fps video mode
+
+The camera HAL of the Lumia 930 now lists a fixed 60 frames/s preview
+range, for the 1080p60 video mode and for camera2 apps. The video module
+takes the range with the highest maximum, so every mode would have run
+at 60. Outside the 60 fps mode pick the highest range up to 30 frames/s.
+
+Change-Id: I2cb7a5cf142c6b32d84346c49c9f90a5037ed9e9
+---
+ src/com/android/camera/VideoModule.java | 10 ++++++++++
+ 1 file changed, 10 insertions(+)
+
+diff --git a/src/com/android/camera/VideoModule.java b/src/com/android/camera/VideoModule.java
+index d81bb96..01b3427 100644
+--- a/src/com/android/camera/VideoModule.java
++++ b/src/com/android/camera/VideoModule.java
+@@ -1673,6 +1673,16 @@ public class VideoModule extends CameraModule
+         }
+         int[] fpsRange =
+                 CameraUtil.getMaxPreviewFpsRange(mCameraCapabilities.getSupportedPreviewFpsRange());
++        if ("martini".equals(android.os.Build.DEVICE) && fpsRange.length > 0 && fpsRange[1] > 31500) {
++            // The HAL lists a fixed 60 for the 60 fps mode: other modes keep the
++            // highest range up to 30 fps.
++            for (int[] r : mCameraCapabilities.getSupportedPreviewFpsRange()) {
++                if (r[1] <= 31500 && (fpsRange[1] > 31500 || r[1] > fpsRange[1]
++                        || (r[1] == fpsRange[1] && r[0] < fpsRange[0]))) {
++                    fpsRange = r;
++                }
++            }
++        }
+         if (mVideo60Fps) {
+             mCameraSettings.setPreviewFpsRange(60000, 60000);
+         } else if (fpsRange.length > 0) {
+-- 
+2.56.1
+
