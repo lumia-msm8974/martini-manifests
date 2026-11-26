@@ -1,0 +1,179 @@
+From 8639058ca9bef04c7dbd3d43c50567cb0658a433 Mon Sep 17 00:00:00 2001
+From: Lorenzo Giannoccaro <giannoccarol@users.noreply.github.com>
+Date: Thu, 26 Nov 2026 13:45:57 +0100
+Subject: [PATCH] Updater: time out stalled downloads and resume them by itself
+
+A download whose network goes away while it runs blocked forever: the
+connection had no read timeout, so read() never returned once a router
+disconnected the device (band steering moves a phone between the 2.4 and
+5 GHz access points) and Android reconnected it on a new network. The
+app kept showing the same size, with no error, until the user paused and
+resumed it.
+
+Give the connection a 15 s connect timeout and a 30 s read timeout, so
+such a download fails, and resume a failed download by itself after 10 s,
+only on Wi-Fi or Ethernet, so that it never moves to mobile data without
+the user. Up to 5 resumes in a row that get no data; data received resets
+the count. Waiting for Wi-Fi or Ethernet does not count, for up to 10
+minutes. A download the user pauses or deletes is left alone.
+
+On a Lumia 930 with a router that disconnected it every 30-60 s, and an
+Android that then kept its Wi-Fi off for 5 and 10 minutes, the download
+went on by itself after each drop.
+
+Change-Id: I55732dcc093de3c134e3a0d894fbf526599feb5a
+---
+ .../updater/controller/UpdaterController.java | 56 +++++++++++++++++++
+ .../download/HttpURLConnectionClient.java     | 13 +++++
+ 2 files changed, 69 insertions(+)
+
+diff --git a/src/org/lineageos/updater/controller/UpdaterController.java b/src/org/lineageos/updater/controller/UpdaterController.java
+index 5d7d51a..291260f 100644
+--- a/src/org/lineageos/updater/controller/UpdaterController.java
++++ b/src/org/lineageos/updater/controller/UpdaterController.java
+@@ -19,6 +19,8 @@ import android.annotation.SuppressLint;
+ import android.content.Context;
+ import android.content.Intent;
+ import android.database.sqlite.SQLiteDatabase;
++import android.os.Handler;
++import android.os.Looper;
+ import android.os.PowerManager;
+ import android.os.SystemClock;
+ import android.util.Log;
+@@ -40,6 +42,7 @@ import java.util.HashSet;
+ import java.util.List;
+ import java.util.Map;
+ import java.util.Set;
++import java.util.concurrent.ConcurrentHashMap;
+ 
+ public class UpdaterController {
+ 
+@@ -64,6 +67,13 @@ public class UpdaterController {
+     private final File mDownloadRoot;
+ 
+     private int mActiveDownloads = 0;
++
++    private static final int MAX_AUTO_RESUMES = 5;
++    private static final long AUTO_RESUME_DELAY_MS = 10000;
++    private static final long AUTO_RESUME_WAIT_MS = 10 * 60 * 1000;
++    private final Handler mHandler = new Handler(Looper.getMainLooper());
++    private final Map<String, Integer> mAutoResumes = new ConcurrentHashMap<>();
++    private final Map<String, Long> mAutoResumeWaitStart = new ConcurrentHashMap<>();
+     private final Set<String> mVerifyingUpdates = new HashSet<>();
+ 
+     protected static synchronized UpdaterController getInstance(Context context) {
+@@ -204,6 +214,7 @@ public class UpdaterController {
+                         removeDownloadClient(entry);
+                         update.setStatus(UpdateStatus.PAUSED_ERROR);
+                         notifyUpdateChange(downloadId);
++                        scheduleAutoResume(downloadId);
+                     }
+                 }
+                 tryReleaseWakelock();
+@@ -211,6 +222,50 @@ public class UpdaterController {
+         };
+     }
+ 
++    /*
++     * A download that fails on a network error (the Wi-Fi reconnected, the
++     * router moved the device to another band) resumes by itself after a few
++     * seconds, only on Wi-Fi or Ethernet so that it never moves to mobile data
++     * without the user. Up to MAX_AUTO_RESUMES resumes in a row that get no data;
++     * data received resets the count. Waiting for Wi-Fi or Ethernet does not
++     * count, for up to AUTO_RESUME_WAIT_MS.
++     */
++    private void scheduleAutoResume(String downloadId) {
++        int tries = mAutoResumes.getOrDefault(downloadId, 0);
++        if (tries >= MAX_AUTO_RESUMES) {
++            Log.d(TAG, "Not resuming " + downloadId + " by itself any more");
++            return;
++        }
++        mAutoResumes.put(downloadId, tries + 1);
++        mAutoResumeWaitStart.remove(downloadId);
++        mHandler.postDelayed(() -> autoResume(downloadId), AUTO_RESUME_DELAY_MS);
++    }
++
++    private void autoResume(String downloadId) {
++        DownloadEntry entry = mDownloads.get(downloadId);
++        if (entry == null || isDownloading(downloadId)
++                || entry.mUpdate.getStatus() != UpdateStatus.PAUSED_ERROR) {
++            mAutoResumeWaitStart.remove(downloadId);
++            return;
++        }
++        if (!Utils.isOnWifiOrEthernet(mContext)) {
++            long now = SystemClock.elapsedRealtime();
++            long waitStart = mAutoResumeWaitStart.getOrDefault(downloadId, now);
++            if (now - waitStart >= AUTO_RESUME_WAIT_MS) {
++                Log.d(TAG, "No Wi-Fi or Ethernet to resume " + downloadId + ", giving up");
++                mAutoResumeWaitStart.remove(downloadId);
++                return;
++            }
++            Log.d(TAG, "Waiting for Wi-Fi or Ethernet to resume " + downloadId);
++            mAutoResumeWaitStart.put(downloadId, waitStart);
++            mHandler.postDelayed(() -> autoResume(downloadId), AUTO_RESUME_DELAY_MS);
++            return;
++        }
++        mAutoResumeWaitStart.remove(downloadId);
++        Log.d(TAG, "Resuming " + downloadId + " after a network error");
++        resumeDownload(downloadId);
++    }
++
+     private DownloadClient.ProgressListener getProgressListener(final String downloadId) {
+         return new DownloadClient.ProgressListener() {
+             private long mLastUpdate = 0;
+@@ -222,6 +277,7 @@ public class UpdaterController {
+                 if (entry == null) {
+                     return;
+                 }
++                mAutoResumes.remove(downloadId);
+                 Update update = entry.mUpdate;
+                 if (contentLength <= 0) {
+                     if (update.getFileSize() <= 0) {
+diff --git a/src/org/lineageos/updater/download/HttpURLConnectionClient.java b/src/org/lineageos/updater/download/HttpURLConnectionClient.java
+index b9c4b5d..2162fed 100644
+--- a/src/org/lineageos/updater/download/HttpURLConnectionClient.java
++++ b/src/org/lineageos/updater/download/HttpURLConnectionClient.java
+@@ -36,6 +36,12 @@ public class HttpURLConnectionClient implements DownloadClient {
+ 
+     private final static String TAG = "HttpURLConnectionClient";
+ 
++    // Without a read timeout a connection whose network went away (a Wi-Fi
++    // reconnection, a router moving the device to another band) blocks in
++    // read() forever and the download never fails nor resumes.
++    private final static int CONNECT_TIMEOUT_MS = 15000;
++    private final static int READ_TIMEOUT_MS = 30000;
++
+     private HttpURLConnection mClient;
+ 
+     private final File mDestination;
+@@ -58,6 +64,7 @@ public class HttpURLConnectionClient implements DownloadClient {
+             DownloadClient.DownloadCallback callback,
+             boolean useDuplicateLinks) throws IOException {
+         mClient = (HttpURLConnection) new URL(url).openConnection();
++        setTimeouts(mClient);
+         mDestination = destination;
+         mProgressListener = progressListener;
+         mCallback = callback;
+@@ -112,6 +119,11 @@ public class HttpURLConnectionClient implements DownloadClient {
+         mDownloadThread.start();
+     }
+ 
++    private static void setTimeouts(HttpURLConnection client) {
++        client.setConnectTimeout(CONNECT_TIMEOUT_MS);
++        client.setReadTimeout(READ_TIMEOUT_MS);
++    }
++
+     private static boolean isSuccessCode(int statusCode) {
+         return (statusCode / 100) == 2;
+     }
+@@ -178,6 +190,7 @@ public class HttpURLConnectionClient implements DownloadClient {
+             String range = mClient.getRequestProperty("Range");
+             mClient.disconnect();
+             mClient = (HttpURLConnection) newUrl.openConnection();
++            setTimeouts(mClient);
+             if (range != null) {
+                 mClient.setRequestProperty("Range", range);
+             }
+-- 
+2.56.1
+
