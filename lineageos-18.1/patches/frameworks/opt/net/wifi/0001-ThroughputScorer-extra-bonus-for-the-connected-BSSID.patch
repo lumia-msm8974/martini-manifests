@@ -1,0 +1,59 @@
+From fdc37a605eaf5fcce05a9f8ad19929776551b20d Mon Sep 17 00:00:00 2001
+From: Lorenzo Giannoccaro <giannoccarol@users.noreply.github.com>
+Date: Thu, 26 Nov 2026 12:46:08 +0100
+Subject: [PATCH] ThroughputScorer: extra bonus for the connected BSSID
+
+The current network bonus goes to every BSSID of the current network, so
+it gives no hysteresis between the 2.4 GHz and 5 GHz BSSIDs of a dual
+band router. With an idle link the network selection runs at every
+periodic scan (low ongoing traffic makes the network "not sufficient"),
+and on a Lumia 930 with a weak 5 GHz signal the device moved between the
+two bands every 20 s: from 2.4 GHz (-54 dBm, 98 Mbps predicted) the
+5 GHz scan entry (-68 dBm, 166 Mbps) scored better, and once connected
+the 5 GHz link read -76..-79 dBm, below the 5 GHz sufficiency threshold,
+so 2.4 GHz scored better again. Each move is a reassociation.
+
+Give the connected BSSID 40 more points (10 dB of RSSI). In the same
+place the device now keeps 5 GHz down to about -80 dBm and keeps 2.4 GHz
+while the 5 GHz entry scans at -68 dBm: 1 move in 5 minutes instead of
+12-15.
+
+Change-Id: Id64d68babf22a978adc83c57f31cc9e3cca55bb8
+---
+ .../com/android/server/wifi/ThroughputScorer.java   | 13 +++++++++++++
+ 1 file changed, 13 insertions(+)
+
+diff --git a/service/java/com/android/server/wifi/ThroughputScorer.java b/service/java/com/android/server/wifi/ThroughputScorer.java
+index ed0d0da..7e18879 100644
+--- a/service/java/com/android/server/wifi/ThroughputScorer.java
++++ b/service/java/com/android/server/wifi/ThroughputScorer.java
+@@ -55,6 +55,16 @@ final class ThroughputScorer implements WifiCandidates.CandidateScorer {
+     public static final int TRUSTED_AWARD = 1000;
+     public static final int HALF_TRUSTED_AWARD = 1000 / 2;
+ 
++    /**
++     * Extra bonus for the BSSID the device is connected to. The current network bonus goes to
++     * every BSSID of the current network, so it gives no hysteresis between the 2.4 GHz and
++     * 5 GHz BSSIDs of a dual band router. With an idle link the selection runs at every periodic
++     * scan, and a device with a weak 5 GHz signal kept moving between the two bands: the 5 GHz
++     * scan entry scored better from 2.4 GHz, and once connected the 5 GHz link read lower and
++     * 2.4 GHz scored better. 40 is 10 dB of RSSI.
++     */
++    public static final int CURRENT_BSSID_AWARD = 40;
++
+     private static final boolean USE_USER_CONNECT_CHOICE = true;
+ 
+     ThroughputScorer(ScoringParams scoringParams) {
+@@ -85,6 +95,9 @@ final class ThroughputScorer implements WifiCandidates.CandidateScorer {
+                 * mScoringParams.getCurrentNetworkBonusPercent() / 100);
+         int currentNetworkBoost = (candidate.isCurrentNetwork() && !unExpectedNoInternet)
+                 ? currentNetworkBonus : 0;
++        if (candidate.isCurrentBssid() && !unExpectedNoInternet) {
++            currentNetworkBoost += CURRENT_BSSID_AWARD;
++        }
+ 
+         int securityAward = candidate.isOpenNetwork()
+                 ? 0
+-- 
+2.56.1
+
