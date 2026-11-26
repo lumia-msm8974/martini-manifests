@@ -1,0 +1,98 @@
+From 2aad0d6a10fa823b3475ffe7a9c7d20cc834e28f Mon Sep 17 00:00:00 2001
+From: Lorenzo Giannoccaro <giannoccarol@users.noreply.github.com>
+Date: Thu, 26 Nov 2026 14:54:02 +0100
+Subject: [PATCH] ThroughputScorer: wider margin against a move to another band
+
+The level a device reads on its link and the level of a scan entry on the
+other band do not always compare. On a Lumia 930 the 5 GHz link reads
+9 dB below a scan of the same access point taken at the same moment
+(-80 against -71 dBm), while on 2.4 GHz the two agree; the selection saw
+the 5 GHz entry at -62 dBm from 2.4 GHz and the link at -79 dBm twenty
+seconds later, more than the 10 dB margin of the connected BSSID, so the
+device still moved 2.4 -> 5 -> 2.4 GHz now and then.
+
+Take 20 more points (5 dB) from a candidate on another band than the
+connected BSSID: 15 dB in all against a band change, 10 dB within a band,
+so a device still moves early between the access points of a mesh. With
+the scores of that phone it keeps 5 GHz down to about -82 dBm and moves
+from 2.4 to 5 GHz only for about 270 Mbps predicted. In 8 minutes with
+the screen on: no move by the network selection.
+
+Change-Id: Ic016794c7c166fa1096c6b8ae18e7ac211f80934
+---
+ .../android/server/wifi/ThroughputScorer.java | 31 +++++++++++++++++--
+ 1 file changed, 29 insertions(+), 2 deletions(-)
+
+diff --git a/service/java/com/android/server/wifi/ThroughputScorer.java b/service/java/com/android/server/wifi/ThroughputScorer.java
+index 7e18879..593cb92 100644
+--- a/service/java/com/android/server/wifi/ThroughputScorer.java
++++ b/service/java/com/android/server/wifi/ThroughputScorer.java
+@@ -65,6 +65,16 @@ final class ThroughputScorer implements WifiCandidates.CandidateScorer {
+      */
+     public static final int CURRENT_BSSID_AWARD = 40;
+ 
++    /**
++     * Extra margin against moving from the connected BSSID to one on another band. The level a
++     * device reads on its link and the level of a scan entry on the other band do not always
++     * compare: on a Lumia 930 the 5 GHz link reads 9 dB below a scan of the same access point,
++     * while on 2.4 GHz the two agree. 20 is 5 dB more, 15 dB in all with CURRENT_BSSID_AWARD.
++     * Within a band the 10 dB margin stays, so a device still moves early between the access
++     * points of a mesh.
++     */
++    public static final int CROSS_BAND_MARGIN = 20;
++
+     private static final boolean USE_USER_CONNECT_CHOICE = true;
+ 
+     ThroughputScorer(ScoringParams scoringParams) {
+@@ -79,7 +89,7 @@ final class ThroughputScorer implements WifiCandidates.CandidateScorer {
+     /**
+      * Calculates an individual candidate's score.
+      */
+-    private ScoredCandidate scoreCandidate(Candidate candidate) {
++    private ScoredCandidate scoreCandidate(Candidate candidate, int crossBandMargin) {
+         int rssiSaturationThreshold = mScoringParams.getSufficientRssi(candidate.getFrequency());
+         int rssi = Math.min(candidate.getScanRssi(), rssiSaturationThreshold);
+         int rssiBaseScore = (rssi + RSSI_SCORE_OFFSET) * RSSI_SCORE_SLOPE_IS_4;
+@@ -133,6 +143,7 @@ final class ThroughputScorer implements WifiCandidates.CandidateScorer {
+             // but include rssi and throughput contributions for BSSID selection.
+             score = TOP_TIER_BASE_SCORE + rssiBaseScore + throughputBonusScore;
+         }
++        score -= crossBandMargin;
+ 
+         if (DBG) {
+             Log.d(TAG, " rssiScore: " + rssiBaseScore
+@@ -161,9 +172,18 @@ final class ThroughputScorer implements WifiCandidates.CandidateScorer {
+ 
+     @Override
+     public ScoredCandidate scoreCandidates(@NonNull Collection<Candidate> candidates) {
++        int connectedBand = 0;
++        for (Candidate candidate : candidates) {
++            if (candidate.isCurrentBssid()) {
++                connectedBand = band(candidate.getFrequency());
++                break;
++            }
++        }
+         ScoredCandidate choice = ScoredCandidate.NONE;
+         for (Candidate candidate : candidates) {
+-            ScoredCandidate scoredCandidate = scoreCandidate(candidate);
++            int crossBandMargin = connectedBand != 0 && !candidate.isCurrentBssid()
++                    && band(candidate.getFrequency()) != connectedBand ? CROSS_BAND_MARGIN : 0;
++            ScoredCandidate scoredCandidate = scoreCandidate(candidate, crossBandMargin);
+             if (scoredCandidate.value > choice.value) {
+                 choice = scoredCandidate;
+             }
+@@ -173,4 +193,11 @@ final class ThroughputScorer implements WifiCandidates.CandidateScorer {
+         return choice;
+     }
+ 
++    /** 2 for 2.4 GHz, 5 for 5 GHz, 6 for 6 GHz. */
++    private static int band(int frequencyMhz) {
++        if (frequencyMhz < 3000) return 2;
++        if (frequencyMhz < 5925) return 5;
++        return 6;
++    }
++
+ }
+-- 
+2.56.1
+

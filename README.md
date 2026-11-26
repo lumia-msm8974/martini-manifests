@@ -48,6 +48,10 @@ git clone https://github.com/lumia-msm8974/martini-manifests
 - `frameworks/opt/net/wifi/0001`: the network selection gives the connected BSSID 40 more points (10 dB). The
   current network bonus goes to every BSSID of the network, so on a dual band router with a weak 5 GHz signal the
   phone moved between 2.4 and 5 GHz every 20 s while idle (12-15 reassociations in 5 minutes, then 1).
+- `frameworks/opt/net/wifi/0002`: 20 more points (5 dB) against a candidate on another band than the connected
+  BSSID, 15 dB in all against a band change. On the Lumia 930 the 5 GHz link reads 9 dB below a scan of the same
+  access point, so with 10 dB the phone still moved 2.4 -> 5 -> 2.4 GHz now and then; with 15 dB, no move by the
+  network selection in 8 minutes with the screen on.
 - `packages/apps/Updater/0001`: downloads get a 15 s connect and a 30 s read timeout, and a download that fails
   resumes by itself after 10 s, only on Wi-Fi or Ethernet (up to 5 resumes in a row that get no data, and up to 10
   minutes of waiting for Wi-Fi). Without it a download stalled for good when the router moved the phone to the other
